@@ -2,7 +2,6 @@ extern crate bindgen;
 extern crate cc;
 extern crate num_cpus;
 extern crate pkg_config;
-extern crate regex;
 
 use std::env;
 use std::fs::{self, create_dir, symlink_metadata, File};
@@ -11,7 +10,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str;
 
-use regex::Regex;
 use bindgen::callbacks::{IntKind, ParseCallbacks, MacroParsingBehavior};
 
 #[derive(Debug)]
@@ -47,20 +45,20 @@ struct IntCallbacks;
 
 impl ParseCallbacks for IntCallbacks {
     fn int_macro(&self, _name: &str, value: i64) -> Option<IntKind> {
-        let ch_layout = Regex::new(r"^AV_CH").unwrap();
-        let codec_cap = Regex::new(r"^AV_CODEC_CAP").unwrap();
-        let codec_flag = Regex::new(r"^AV_CODEC_FLAG").unwrap();
-        let error_max_size = Regex::new(r"^AV_ERROR_MAX_STRING_SIZE").unwrap();
+        let ch_layout = "AV_CH";
+        let codec_cap = "AV_CODEC_CAP";
+        let codec_flag = "AV_CODEC_FLAG";
+        let error_max_size = "AV_ERROR_MAX_STRING_SIZE";
 
         if value >= i64::min_value() as i64 && value <= i64::max_value() as i64
-            && ch_layout.is_match(_name)
+            && _name.starts_with(ch_layout)
         {
             Some(IntKind::ULongLong)
         } else if value >= i32::min_value() as i64 && value <= i32::max_value() as i64
-            && (codec_cap.is_match(_name) || codec_flag.is_match(_name))
+            && (_name.starts_with(codec_cap) || _name.starts_with(codec_flag))
         {
             Some(IntKind::UInt)
-        } else if error_max_size.is_match(_name) {
+        } else if _name.starts_with(error_max_size) {
             Some(IntKind::Custom {
                 name: "usize",
                 is_signed: false,
@@ -266,7 +264,8 @@ fn build() -> io::Result<()> {
     // run ./configure
     let output = configure
         .output()
-        .expect(&format!("{:?} failed", configure));
+        .unwrap_or_else(|_| panic!("{:?} failed", configure));
+
     if !output.status.success() {
         println!("configure: {}", String::from_utf8_lossy(&output.stdout));
 
@@ -300,7 +299,7 @@ fn build() -> io::Result<()> {
 
 fn check_features(
     include_paths: Vec<PathBuf>,
-    infos: &Vec<(&'static str, Option<&'static str>, &'static str)>,
+    infos: &[(&'static str, Option<&'static str>, &'static str)],
 ) {
     let mut includes_code = String::new();
     let mut main_code = String::new();
@@ -450,11 +449,11 @@ fn check_features(
     }
 }
 
-fn search_include(include_paths: &Vec<PathBuf>, header: &str) -> String {
+fn search_include(include_paths: &[PathBuf], header: &str) -> String {
     for dir in include_paths {
         let include = dir.join(header);
         if fs::metadata(&include).is_ok() {
-            return format!("{}", include.as_path().to_str().unwrap());
+            return include.as_path().to_str().unwrap().to_string();
         }
     }
     format!("/usr/include/{}", header)
@@ -485,8 +484,8 @@ fn main() {
         link_to_libraries(statik);
         if fs::metadata(&search().join("lib").join("libavutil.a")).is_err() {
             fs::create_dir_all(&output())
-                .ok()
                 .expect("failed to create build directory");
+
             fetch().unwrap();
             build().unwrap();
         }
@@ -529,8 +528,7 @@ fn main() {
         pkg_config::Config::new()
             .statik(statik)
             .probe("libavutil")
-            .unwrap()
-            .include_paths;
+            .unwrap();
 
         let libs = vec![
             ("libavformat", "AVFORMAT"),
@@ -546,8 +544,7 @@ fn main() {
                 pkg_config::Config::new()
                     .statik(statik)
                     .probe(lib_name)
-                    .unwrap()
-                    .include_paths;
+                    .unwrap();
             }
         };
 
